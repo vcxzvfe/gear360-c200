@@ -30,14 +30,31 @@ before relying on it.
 **How to check:** the full model code is printed on the camera body / in the
 battery compartment, in the form `SM-C200NZWA` + a three-letter region code.
 
-`[INFERRED]` A regional feature difference has already been observed on
-hardware: a mainland-China unit with a memory card inserted shows **no
+### The region hypothesis was tested and REFUTED `[VERIFIED on hardware, 2026-07-27]`
+
+A mainland-China-market unit with a memory card inserted shows **no
 `Google Street View` entry** in the press-and-hold menu, while the global launch
-manual documents it. Google services are unavailable in mainland China and
-Samsung China routinely removes Google integrations, which would explain it —
-but **no source directly confirms the removal**, and no other regional
-difference has been characterised. If you can report a region code together with
-whether `Google Street View` is present, that is a genuinely useful data point.
+manual (English, 05/2016, Rev.1.0) documents it. The obvious explanation was a
+China-specific firmware with Google integrations removed.
+
+**That explanation is wrong.** EXIF from a photo taken on that unit reports
+`Software = C200GLU0AQK1` — the camera is running the **global** build, and
+specifically the **final** one. So:
+
+- Flashing the global image to that unit would be a **no-op**, not a fix.
+- The missing menu entry is **not** a regional difference.
+- `[INFERRED]` The remaining explanation is that the entry was **removed in a
+  later firmware build**. The launch manual documents it at 05/2016; it is absent
+  on `AQK1` (2017-11-21, the last build). Untested against an earlier build —
+  **if you have a C200 on `APC9`/`APE4`/`API1`/`AQC1`/`AQF1`, please report
+  whether `Google Street View` appears in your press-and-hold menu.** That single
+  observation would settle it.
+
+**Note for `AQK1` owners:** `[COMMUNITY]` there are directly contradictory
+reports about whether this final build breaks the remote viewfinder, and every
+wire-level live-stream capture in this repository comes from `APE4`, the
+*oldest* build. If you own two units on different builds, **do not update the
+older one** — on this project's main line it is the more valuable of the two.
 
 ---
 

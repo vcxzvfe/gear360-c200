@@ -56,16 +56,28 @@ recovery image. Every Samsung host is dead; obtain and verify a good copy first.
 > camera body.** The manual exposes the firmware version only through the phone app
 > (*Samsung Gear 360 → MORE → Settings → Gear 360 firmware version*), and the camera's own
 > Menu key offers only: short press → `Video / Photo / Time lapse / Video looping /
-> Settings`; press-and-hold → `Gear 360 Manager / Remote control / Google Street View`.
->
-> **Therefore, if you have no Android phone, do Experiment 3 first** — OSC `/osc/info`
-> returns `firmwareVersion` and `model`, so it answers this experiment without a phone,
-> without an SD card, and without changing any camera setting. Experiment 3 is then both
-> the cheapest experiment in the project *and* the only phone-free way to inventory a unit.
+> Settings`; press-and-hold → `Gear 360 Manager / Remote control` (+ `Google Street View`
+> on firmware that has it — see Experiment 3).
+
+## The phone-free way to read the firmware version: EXIF
+
+`[VERIFIED on hardware, 2026-07-27]` **The camera stamps its firmware build into the EXIF
+of every photo it takes.** Insert a card, take one photo, read the card on a computer:
+
+```bash
+exiftool -Make -Model -Software -FirmwareVersion -CreateDate /Volumes/*/DCIM/*/*.JPG | head -20
+```
+
+The `Software` field returns the build string directly, e.g. `C200GLU0AQK1`.
+
+This needs **no Android phone, no Samsung app, no OSC mode, and no modification of any
+kind** — it is the cheapest and most universally available inventory method, and it works
+on any unit that can still take a picture. Prior write-ups (including earlier drafts of
+this repository) stated the version was only reachable through the phone app. That is
+wrong.
 
 On each camera record: unit label, firmware string, whether the app connects, whether live
-view works. Obtain the firmware string by **either** the phone app path above **or**
-Experiment 3's `/osc/info` (no phone required).
+view works.
 
 **Expected:** one of `C200GLU0APC9 / APE4 / API1 / AQC1 / AQF1 / AQK1` `[COMMUNITY]`.
 `[UNKNOWN]` whether OSC's `firmwareVersion` field reports that same build-ID format or a
