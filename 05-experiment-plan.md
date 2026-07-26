@@ -9,7 +9,15 @@ firmware**, so the highest-value question in the project can be answered without
 putting the hardware at risk.
 
 Standing rules:
-- **Unit A** = the guinea pig. **Unit B** = sealed, known-good reference. Do not modify B.
+- **Assign the guinea-pig role by firmware build, not arbitrarily.** `[VERIFIED on
+  hardware, 2026-07-27]` A real pair of C200s was found to be on `C200GLU0AQK1` (the final
+  build, 2017-11-21) and `C200GLU0APC9` (the oldest documented build) respectively. Since
+  `[COMMUNITY]` the final build is the one reported to break the remote viewfinder, and
+  every wire-level stream capture in this repository comes from `APE4` — adjacent to
+  `APC9` — the **older unit is the main-line unit** and the **newer unit is the guinea
+  pig.** Read both units' builds via EXIF (Experiment 1) *before* assigning roles.
+- **Never firmware-update the older unit.** On this project's main line its value is
+  precisely that it is old. Updating it is an irreversible loss of the A/B pair.
 - Record firmware version of both units before anything (Experiment 1).
 - `[UNKNOWN]` markers below are real gaps. If an experiment's expected output is marked
   unknown, you are generating new knowledge — write down what you actually see.
