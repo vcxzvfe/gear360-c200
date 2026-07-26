@@ -31,6 +31,7 @@ USAGE
     4. Rejoin your normal network and read the printed report.
 """
 import json
+import os
 import socket
 import sys
 import urllib.error
@@ -89,13 +90,40 @@ def show(status, head, data):
         print("      " + txt.replace("\n", "\n      "))
 
 
+class Tee:
+    """Everything printed here also lands in a file.
+
+    This script is run while the computer is joined to the camera's access
+    point and therefore offline, so terminal scrollback is the only copy of
+    the result unless it is written to disk. An earlier version printed only
+    to stdout and a full run's output was nearly lost.
+    """
+
+    def __init__(self, path):
+        self.f = open(path, "w", encoding="utf-8")
+        self.stdout = sys.stdout
+
+    def write(self, s):
+        self.stdout.write(s)
+        self.f.write(s)
+
+    def flush(self):
+        self.stdout.flush()
+        self.f.flush()
+
+
 def main():
     ip = sys.argv[1] if len(sys.argv) > 1 else "192.168.107.1"
     base = "http://%s" % ip
     exe = base + "/osc/commands/execute"
 
+    from datetime import datetime
+    logpath = os.path.abspath("osc-probe-%s.txt" % datetime.now().strftime("%Y%m%d-%H%M%S"))
+    sys.stdout = Tee(logpath)
+
     print("=" * 66)
     print("OSC command probe -> %s" % ip)
+    print("saving to %s" % logpath)
     print("=" * 66)
 
     try:

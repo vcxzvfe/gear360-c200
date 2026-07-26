@@ -152,3 +152,56 @@ different services per mode.
    see the correction above. `tools/osc_probe.py` answers it.
 3. **Which build removed the Street View entry?** Needs a unit on `APE4`,
    `API1`, `AQC1` or `AQF1`.
+
+---
+
+## 2026-07-27 — OSC is definitively closed for live video
+
+Unit B, `C200GLU0APC9`, Street View mode. Every live-preview command spelling
+returns `unknownCommand`:
+
+```
+camera.getLivePreview            -> 400 {"code":"unknownCommand"}
+camera._getLivePreview           -> 400 {"code":"unknownCommand"}
+camera.getLivePreview {_mode}    -> 400 {"code":"unknownCommand"}
+camera._getPreview               -> 400 {"code":"unknownCommand"}
+camera.getPreview                -> 400 {"code":"unknownCommand"}
+```
+
+By the criterion this repository set in advance — `unknownCommand` closes the
+question, any other error would mean the command exists — **Path 2 (OSC) is
+closed for live video.** `[VERIFIED]` This supersedes the earlier non-result
+that came from misreading the `api` array.
+
+What does work: `camera.startSession` (returns e.g. `SID_0216`, timeout 300),
+`camera.closeSession`, `camera.listImages`.
+
+**The most informative result is `camera.getOptions`.** Asked for ten option
+names, the camera returned exactly one:
+
+```json
+{"name":"camera.getOptions","state":"done","results":{"options":{"captureMode":"image"}}}
+```
+
+`previewFormat`, `previewFormatSupported`, `captureModeSupported`,
+`fileFormat`, `exposureProgram`, `remainingPictures`, `totalSpace`,
+`remainingSpace` and `_liveStream` were **silently dropped** rather than
+producing the error the specification requires. This is a minimum-viable OSC
+implementation built to hand stills to the Street View app, with no video
+surface at all. Do not spend further effort here.
+
+## 2026-07-27 — `Remote control` mode raises no Wi-Fi
+
+`[COMMUNITY — operator report]` On `APC9`, entering `Remote control` shows a
+pairing indication and **no joinable Wi-Fi network appears**; a Mac cannot
+connect to it.
+
+`[INFERRED]` It is a **Bluetooth** mode. The manual's LED table lists
+`Red → Green → Blue = Bluetooth pairing mode`, and of the three press-and-hold
+entries `Gear 360 Manager` is explicitly "Enter Bluetooth pairing mode". So
+`Remote control` is most likely a Bluetooth shutter/remote pairing mode, not a
+network mode.
+
+**Consequence:** it does not reopen the 7676 (SOAP) or 7679 (stream) surfaces,
+and the hope that it might be a phone-free route to RVF is not supported.
+`[UNKNOWN]` whether macOS can pair with it at all, or what profile it exposes.
