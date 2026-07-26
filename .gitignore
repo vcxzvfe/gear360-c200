@@ -1,0 +1,19 @@
+# Samsung-copyrighted firmware images are NEVER committed.
+# Only their hashes are published, in firmware/CHECKSUMS.md, so that
+# anyone can verify a copy they obtained themselves.
+firmware/*.bin
+firmware/*.zip
+firmware/*.tar*
+
+# Local research scratch: cloned upstream repos, forum dumps, captures
+research/*
+!research/.gitkeep
+
+# Stream captures
+*.ttts
+*.hevc
+*.avi
+
+__pycache__/
+*.pyc
+.DS_Store
