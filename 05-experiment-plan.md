@@ -105,6 +105,23 @@ has ever got working. Even as a fallback it is worth having.
 this.**
 **Risk:** none.
 
+> **PREREQUISITE — a memory card must be inserted, or the menu item is not there.**
+> `[VERIFIED on hardware, 2026-07-27]` A C200 with no card in it shows only
+> `Gear 360 Manager / Remote control` in the press-and-hold menu — **`Google Street View`
+> is absent.** This is not a firmware or region difference: the launch manual
+> (English, 05/2016, Rev.1.0) documents all three items.
+>
+> `[VERIFIED — manual]` The C200 has **no internal storage at all**: *"A memory card must
+> be inserted to take photos or record videos."* `[COMMUNITY]` Samsung's own support
+> material shows other storage-dependent items (e.g. card formatting) vanishing from the
+> menus under the same condition. `[INFERRED]` Street View mode is hidden by the same
+> gate, since the mode exists to capture photos.
+>
+> **Diagnostic:** the camera's status display reads `No card` when none is inserted.
+>
+> Insert an **ordinary blank card, FAT32, with no mod files on it whatsoever.** At this
+> stage the card is plain storage — no `info.tg`, no `.adj`, nothing. Zero risk.
+
 Put Unit A into **Google Street View mode** on the camera body. The exact key sequence,
 `[VERIFIED — official SM-C200 manual]`, is **two** steps and the first one is easy to miss:
 
