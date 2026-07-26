@@ -239,9 +239,16 @@ def main():
                 say("        model=%s  firmware=%s  apiLevel=%s"
                     % (info.get("model"), info.get("firmwareVersion"), info.get("apiLevel")))
                 api = info.get("api") or []
-                say("        api commands: %d" % len(api))
-                lp = [c for c in api if "ivePreview" in c]
-                say("        getLivePreview present: %s" % (lp or "NO"))
+                say("        api endpoints: %d -> %s" % (len(api), ", ".join(api)))
+                # NOTE: do NOT look for camera.getLivePreview in this array.
+                # `api` lists protocol ENDPOINTS, not command names; on a
+                # level-1 camera it is always the same five. getLivePreview is
+                # a command posted to /osc/commands/execute, so its absence
+                # here proves nothing. An earlier version of this script
+                # reported "getLivePreview present: NO" from this array and
+                # would have falsely closed the OSC path. Use osc_probe.py --
+                # it sends the commands and reads the errors.
+                say("        (command support is NOT visible here -- run osc_probe.py)")
             except Exception:
                 pass
     report["http"] = http_results

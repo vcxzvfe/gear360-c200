@@ -120,6 +120,7 @@ Stated plainly, so nothing here reads as further along than it is:
 | [`04-live-video-paths.md`](04-live-video-paths.md) | Ranked candidate paths, with falsification tests |
 | [`05-experiment-plan.md`](05-experiment-plan.md) | Ordered bench experiments; all observation before any write |
 | [`06-open-questions.md`](06-open-questions.md) | Everything still unknown, ranked by how much it blocks |
+| [`07-observations.md`](07-observations.md) | **Measurements from real hardware.** Firmware-dependent menus, first published /osc/info, mode-dependent ports |
 | [`firmware/CHECKSUMS.md`](firmware/CHECKSUMS.md) | Verification data for the C200 firmware image. No binary is distributed. |
 | [`tools/ttt_demux.py`](tools/ttt_demux.py) | TTTS→HEVC demuxer for the port-7679 stream. **Untested against hardware.** |
 | [`tools/c200_fov_calibrate.py`](tools/c200_fov_calibrate.py) | Measures the correct `v360=dfisheye` FOV for a given C200 unit |
