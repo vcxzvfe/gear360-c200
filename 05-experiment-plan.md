@@ -51,11 +51,25 @@ recovery image. Every Samsung host is dead; obtain and verify a good copy first.
 **Goal:** know your starting state, and settle the AQK1 question for *your* hardware.
 **Risk:** none.
 
-On each camera: power on, read the firmware version from the camera menu (and/or the
-Samsung app). Record: unit label, firmware string, whether the app connects, whether live
-view works.
+> **CORRECTION `[VERIFIED — official SM-C200 manual]`.** An earlier draft of this plan said
+> to "read the firmware version from the camera menu". **There is no such menu item on the
+> camera body.** The manual exposes the firmware version only through the phone app
+> (*Samsung Gear 360 → MORE → Settings → Gear 360 firmware version*), and the camera's own
+> Menu key offers only: short press → `Video / Photo / Time lapse / Video looping /
+> Settings`; press-and-hold → `Gear 360 Manager / Remote control / Google Street View`.
+>
+> **Therefore, if you have no Android phone, do Experiment 3 first** — OSC `/osc/info`
+> returns `firmwareVersion` and `model`, so it answers this experiment without a phone,
+> without an SD card, and without changing any camera setting. Experiment 3 is then both
+> the cheapest experiment in the project *and* the only phone-free way to inventory a unit.
+
+On each camera record: unit label, firmware string, whether the app connects, whether live
+view works. Obtain the firmware string by **either** the phone app path above **or**
+Experiment 3's `/osc/info` (no phone required).
 
 **Expected:** one of `C200GLU0APC9 / APE4 / API1 / AQC1 / AQF1 / AQK1` `[COMMUNITY]`.
+`[UNKNOWN]` whether OSC's `firmwareVersion` field reports that same build-ID format or a
+shorter marketing version string — record verbatim whatever it returns.
 
 **Why this matters:** `[COMMUNITY]` there are **directly contradictory** reports about
 whether the final build `AQK1` breaks the viewfinder. All wire-level evidence in this
@@ -91,21 +105,43 @@ has ever got working. Even as a fallback it is worth having.
 this.**
 **Risk:** none.
 
-Put Unit A into **Google Street View mode** on the camera body. `[COMMUNITY]` It creates
-its own AP whose SSID ends in `.OSC`, with an **8-digit password shown on the camera LCD**.
-Join it from the Mac.
+Put Unit A into **Google Street View mode** on the camera body. The exact key sequence,
+`[VERIFIED — official SM-C200 manual]`, is **two** steps and the first one is easy to miss:
+
+> 1. **Press and hold** the Menu key.
+> 2. Press the Menu key until `Google Street View` appears, then press the OK key.
+
+Short-pressing alone will never reach it: the short-press menu is only
+`Video / Photo / Time lapse / Video looping / Settings`. The press-and-hold menu is
+`Gear 360 Manager / Remote control / Google Street View`.
+
+`[COMMUNITY]` The camera then creates its own AP whose SSID ends in `.OSC`, with an
+**8-digit password shown on the camera LCD**. Join it from the Mac.
 
 ```bash
-ipconfig getifaddr en0          # confirm you're on the camera's subnet (expect 192.168.107.x)
+ipconfig getifaddr en0                 # your address on the camera's subnet
+netstat -rn | grep -m1 default         # the camera IS the gateway — use THIS address below
 curl -s -m 10 http://192.168.107.1/osc/info | python3 -m json.tool
 ```
 
+`[COMMUNITY]` `192.168.107.1` is what baardove observed on a 2016 Gear 360, and his own
+README warns *"Different firmware and different cameras might use different range and
+address."* **Use the gateway your Mac was actually assigned**, not the literal address above.
+
 **Expected** `[INFERRED — OSC spec; not C200-verified]`: JSON containing `manufacturer`,
-`model`, `apiLevel`, and an `api` array listing supported commands.
+`model`, `serialNumber`, `firmwareVersion`, `apiLevel`, and an `api` array.
 
 **What to look for:**
+- `firmwareVersion` — this is also the phone-free answer to Experiment 1.
 - `apiLevel` — is it `[1]` or does it include `2`?
 - Is `camera.getLivePreview` present in the `api` list?
+
+**Calibrate your expectations before running this.** `[COMMUNITY]` baardove's client
+describes the 2016 Gear 360 as **"Open Spherical Camera API level 1"**, and
+`camera.getLivePreview` is an OSC **level 2** command. So the most likely outcome is
+**absent** — this experiment probably *closes* a path rather than opening one. Run it
+anyway: it is 10 minutes, it is the only phone-free way to read the firmware version, and
+no C200 `/osc/info` dump has ever been published.
 
 **Failure signature:** connection refused / timeout. Then try the gateway address your Mac
 was actually assigned (`netstat -rn | grep default`) — `[COMMUNITY]` the address range may
