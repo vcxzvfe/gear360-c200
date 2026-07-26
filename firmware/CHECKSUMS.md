@@ -9,6 +9,38 @@ you hold a verified copy, keep at least two offline backups. `[VERIFIED]`
 
 ---
 
+## ⚠️ This image is the GLOBAL build. Check your unit's region first.
+
+`[VERIFIED]` `C200GLU0AQK1.bin` contains exactly one C200 build string,
+`SMC200GLU0AQK1` — the **GLU (global)** build. `[VERIFIED]` Samsung China lists
+this camera as model **`SM-C200NZWACHN`**, so at least one regional variant
+exists that this image does not correspond to.
+
+**`[UNKNOWN]` Whether the GLU image is safe to flash to a non-GLU unit. Nobody
+has published an attempt.** Cross-*model* flashing (R210 → C200) is a documented
+unrecoverable brick; cross-*region* flashing of the same model is usually benign
+on Samsung phones, but **that experience has never been validated on this
+camera** and it must not be assumed here.
+
+**Practical consequence:** if your unit is not a GLU unit, **this image is not
+your recovery image**, and the safety argument that "a verified recovery image
+makes the risk manageable" does not apply to you. Establish your region code
+before relying on it.
+
+**How to check:** the full model code is printed on the camera body / in the
+battery compartment, in the form `SM-C200NZWA` + a three-letter region code.
+
+`[INFERRED]` A regional feature difference has already been observed on
+hardware: a mainland-China unit with a memory card inserted shows **no
+`Google Street View` entry** in the press-and-hold menu, while the global launch
+manual documents it. Google services are unavailable in mainland China and
+Samsung China routinely removes Google integrations, which would explain it —
+but **no source directly confirms the removal**, and no other regional
+difference has been characterised. If you can report a region code together with
+whether `Google Street View` is present, that is a genuinely useful data point.
+
+---
+
 ## `C200GLU0AQK1` — final SM-C200 build
 
 Distributed as `C200GLU0AQK1_171121_1257_REV00_user.bin` (some mirrors shorten
