@@ -126,6 +126,9 @@ Stated plainly, so nothing here reads as further along than it is:
 | [`tools/ttts_capture.py`](tools/ttts_capture.py) | CLI: capture from the camera, or re-demux a saved container |
 | [`tools/osc_probe.py`](tools/osc_probe.py) | Sends OSC commands and reads the errors. Closed the OSC question |
 | [`08-firmware-teardown.md`](08-firmware-teardown.md) | **Firmware teardown.** RVF chain, recovered SOAP request, custom-firmware verdict |
+| [`09-root-procedure.md`](09-root-procedure.md) | **SD-card root procedure.** Byte-exact card layout, zero-risk recon stage first |
+| [`tools/rvf_soap.py`](tools/rvf_soap.py) | Fires the recovered changeToRVF SOAP, then streams. Zero-risk probe today |
+| [`tools/card/`](tools/card/) | Files that go on the microSD for the read-only recon pass |
 | [`tools/c200_fov_calibrate.py`](tools/c200_fov_calibrate.py) | Measures the correct `v360=dfisheye` FOV for a given C200 unit |
 
 ---
