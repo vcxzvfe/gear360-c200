@@ -49,6 +49,9 @@ struct arm_regs { unsigned long uregs[18]; };
 
 /* Fallback request numbers, so this builds under any Linux libc (glibc, musl)
  * whose <sys/ptrace.h> spells these differently. Standard Linux values. */
+#ifndef __WALL
+#define __WALL 0x40000000       /* wait on non-main (clone) threads too */
+#endif
 #ifndef PTRACE_ATTACH
 #define PTRACE_ATTACH 16
 #endif
@@ -80,7 +83,7 @@ int main(int argc, char **argv)
             return 3;  /* EPERM here = SMACK/yama blocked ptrace */
         }
         int st;
-        waitpid(p, &st, 0);
+        waitpid(p, &st, __WALL);
         ptrace(PTRACE_DETACH, p, 0, 0);
         printf("PROBE OK: ptrace attach+detach on pid %d succeeded\n", p);
         return 0;
@@ -109,7 +112,7 @@ int main(int argc, char **argv)
     }
 
     int status;
-    if (waitpid(pid, &status, 0) < 0) {
+    if (waitpid(pid, &status, __WALL) < 0) {
         fprintf(stderr, "waitpid(attach) failed: %s\n", strerror(errno));
         ptrace(PTRACE_DETACH, pid, 0, 0);
         return 3;
@@ -157,7 +160,7 @@ int main(int argc, char **argv)
             break;
         }
         pending = 0;
-        if (waitpid(pid, &status, 0) < 0) {
+        if (waitpid(pid, &status, __WALL) < 0) {
             fprintf(stderr, "waitpid(run) failed: %s\n", strerror(errno));
             break;
         }
