@@ -242,3 +242,47 @@ establish that the specification matches what the camera emits — nothing but a
 capture from real hardware can do that, and none exists yet, by anyone. The
 first person to capture one should keep the raw container bytes
 (`ttts_capture.py --raw`), because that artifact has never been published.
+
+---
+
+## 2026-07-27 — The recovered SOAP was fired at the camera. 7676 is not there.
+
+Unit B, `C200GLU0APC9`, Street View / OSC mode, camera at `192.168.107.1`,
+client `192.168.107.103`. Using `tools/rvf_soap.py`, which carries the
+`SetOperationState(changeToRVF)` request recovered verbatim from
+`libdi-network-dlna-rvf.so`:
+
+```
+7676 (control): closed
+7679 (stream):  closed
+```
+
+Priority port probe in the same session — `53` and `80` open; `21, 23, 443,
+554, 2869, 5555, 7676, 7677, 7678, 7679, 7680, 8080, 8888, 9001` all closed.
+
+**This converts the chicken-and-egg from inference to measurement.** `[VERIFIED]`
+The teardown *predicted*, from the firmware, that 7676 belongs to a subsystem
+that Street View mode never starts. That prediction has now been tested by
+actually sending the request: there is nothing listening to receive it. The
+control surface is **not reachable without a Bluetooth or root-side trigger**.
+
+Note on `9001`: the firmware teardown listed it as a port "nobody has probed".
+That is true of the published community record, but this project had already
+probed it in its first recon run, and it is closed in this mode too. Recorded
+here so the teardown's to-do list is not carried forward as still-open.
+
+### Where that leaves the routes
+
+Everything reachable from outside a stock camera has now been tried and is
+exhausted:
+
+| Attempt | Result |
+|---|---|
+| OSC live-preview commands, five spellings | `unknownCommand` — closed |
+| Street View mode as an RVF trigger | 7679 never binds — closed |
+| The recovered SOAP, sent for real | 7676 not listening — closed |
+| `Remote control` mode | raises no joinable Wi-Fi — closed |
+
+`[VERIFIED]` **No zero-touch path remains.** The next move has to be Stage A of
+the SD-card procedure (`09-root-procedure.md`) — which is still zero block
+writes, but does put a card in the camera.
