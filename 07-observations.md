@@ -377,3 +377,76 @@ clearly written to it (`DCIM`, `SYSTEM`, `.config`), so the camera reads ExFAT.
 Whether `dfmsd` script mode also reads it is `[UNKNOWN]`; if the recon chain
 does not fire, filesystem type is the second thing to vary after byte-exactness
 of `info.tg`.
+
+---
+
+## 2026-07-27 — Stage-A root reconnaissance SUCCEEDED (Unit A, AQK1)
+
+The `dfmsd` script chain fired on the first attempt. The ExFAT card worked; the
+byte-exact `info.tg`/`recon.adj` worked. All 18 read-only outputs plus the
+`DONE` marker were written to the card. Full set archived under
+`research/recon-out-AQK1-20260727/`. This is the first published inside-the-box
+data from an SM-C200.
+
+### The headline results
+
+**`id` → `uid=0(root) gid=0(root)`.** `[VERIFIED-DEVICE]` Root, with zero block
+writes and a fully reversible card change.
+
+**`uname` → `Linux drime5 3.5.0 #5 PREEMPT ... armv7l`.** `[VERIFIED-DEVICE]`
+DRIMe5 SoC, kernel 3.5.0, ARMv7 (32-bit, little-endian) — the ABI any
+cross-compiled binary must target, now confirmed on hardware rather than
+inferred.
+
+**`version.info`** confirms `SMC200GLU0AQK1`, `DSP_SMC200GLU0AQK1_DV1`,
+platform version `0.85` — matches the firmware image header exactly.
+
+### The port model is confirmed on hardware
+
+`[VERIFIED-DEVICE]` `netstat -lntp` while `di-camera-app` (PID 252) was running
+listed **zero listening TCP sockets.** The teardown's central claim — that
+80/7676/7679/9001 are not daemons but are bound on demand when the app enters a
+mode — is now confirmed directly: the app is up, and nothing is listening until
+a mode is entered. This is exactly why every external probe found closed ports.
+
+### V4L2 capture path is closed
+
+`[VERIFIED-DEVICE]` `/dev/video0..2` and `/dev/media0` do **not exist**. Capture
+is entirely behind the proprietary DRIMe5 API; there is no standard V4L2 node to
+read. The non-RVF capture fallback (teardown §4) is therefore not reachable from
+userspace. RVF is the only video path.
+
+### The RVF trigger surface, live and introspected
+
+`[VERIFIED-DEVICE]` `org.bt.app` at `/org/bt/app_service` exposes exactly one
+real method, with its full signature read off the running system:
+
+```
+app_service_request(
+    i  svc_type,      i  svc_function,   i  req_type,
+    ay input1, ay input2, ay input3, ay input4, ay input5,
+) -> ( i output1, v output2 )
+```
+
+This is the D-Bus method that Bluetooth commands travel through into
+`di-camera-app`. **A root shell can call it directly**, short-circuiting the
+entire Bluetooth/SAP transport that was route A's hard part. `org.bt.app_event`
+introspects to an empty node (it is signal-only), so the request path is
+`app_service_request`, not an event emit.
+
+`sdbd` also came up on request and bound **`127.0.0.1:26099`** (localhost only —
+so not directly reachable from the Mac without a port forward, but present).
+
+### What is now the single remaining unknown
+
+The three integers `svc_type / svc_function / req_type` that mean "liveview".
+The teardown located `EXE_LIVEVIEW = 20` in the BT command vocabulary and the
+handler `CUINETFuncBluetooth::handle_bt_app_receive_command`; the mapping from
+that to the `app_service_request` argument triple has to come from disassembly
+of `di-camera-app` around @0x241b08. Once that triple is known, a one-line
+`dbus-send` from a card script starts RVF with no phone and no SAP — and Stage A
+proved a card script runs as root.
+
+**Project status:** the phone-free path is no longer blocked on an unknown
+mechanism. It is blocked on three integers, recoverable from a binary already on
+disk, then executable through a mechanism already proven to work.
