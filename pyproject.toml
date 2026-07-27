@@ -1,0 +1,15 @@
+[tool.pytest.ini_options]
+markers = [
+    "unit: fast tests against synthetic containers, no hardware",
+    "integration: requires ffmpeg or a real capture",
+]
+testpaths = ["tests"]
+
+[tool.black]
+line-length = 88
+
+[tool.isort]
+profile = "black"
+
+[tool.ruff]
+line-length = 88

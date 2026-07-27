@@ -122,7 +122,10 @@ Stated plainly, so nothing here reads as further along than it is:
 | [`06-open-questions.md`](06-open-questions.md) | Everything still unknown, ranked by how much it blocks |
 | [`07-observations.md`](07-observations.md) | **Measurements from real hardware.** Firmware-dependent menus, first published /osc/info, mode-dependent ports |
 | [`firmware/CHECKSUMS.md`](firmware/CHECKSUMS.md) | Verification data for the C200 firmware image. No binary is distributed. |
-| [`tools/ttt_demux.py`](tools/ttt_demux.py) | TTTS→HEVC demuxer for the port-7679 stream. **Untested against hardware.** |
+| [`tools/ttts.py`](tools/ttts.py) | TTTS demuxer library, written from the camera's own muxer. 19 tests, incl. real-HEVC round trip |
+| [`tools/ttts_capture.py`](tools/ttts_capture.py) | CLI: capture from the camera, or re-demux a saved container |
+| [`tools/osc_probe.py`](tools/osc_probe.py) | Sends OSC commands and reads the errors. Closed the OSC question |
+| [`08-firmware-teardown.md`](08-firmware-teardown.md) | **Firmware teardown.** RVF chain, recovered SOAP request, custom-firmware verdict |
 | [`tools/c200_fov_calibrate.py`](tools/c200_fov_calibrate.py) | Measures the correct `v360=dfisheye` FOV for a given C200 unit |
 
 ---

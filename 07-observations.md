@@ -205,3 +205,40 @@ network mode.
 **Consequence:** it does not reopen the 7676 (SOAP) or 7679 (stream) surfaces,
 and the hope that it might be a phone-free route to RVF is not supported.
 `[UNKNOWN]` whether macOS can pair with it at all, or what profile it exposes.
+
+---
+
+## 2026-07-27 — TTTS demuxer built and validated (no camera required)
+
+`[VERIFIED-EXTRACTED]` The container specification came out of the camera's own
+muxer, `cTTTWriter` in `/usr/lib/libmmfcore.so`, so the desktop side could be
+built before the trigger problem is solved. See `08-firmware-teardown.md` §1.4(c).
+
+**A prior implementation in this repository was wrong and has been removed.**
+`tools/ttt_demux.py` was reconstructed from the Android app and parsed a
+structured header containing a `VRO0` / `00VR` orientation track. The firmware
+writes `ACC0` / `AC00`, and a byte scan of all 11,567 files in the extracted
+root filesystem finds **zero** occurrences of `VRO0` or `00VR`. Its header
+parser would also have desynced: the header frame is a fixed 224 bytes, which
+is the firmware's own log text, not a set of walkable sub-records. Keeping two
+demuxers that disagree is worse than keeping one; it is in git history.
+
+`tools/ttts.py` replaces it. `tests/test_ttts.py` has 17 unit tests over
+synthetic containers — including byte-granularity independence, since a socket
+returns short reads and that is the classic way this kind of parser silently
+corrupts a stream — and one test that asserts `00VR` is **rejected**, so that if
+a real capture ever does contain it, the failure is loud rather than silent.
+
+`tests/test_ttts_e2e.py` closes the gap the unit tests cannot: ffmpeg encodes
+real HEVC at the camera's own 2560×1280, it is split at access-unit boundaries
+with parameter sets leading their keyframe (as the muxer does), wrapped in TTTS,
+demuxed, and then **decoded back to pixels**. Byte-identity is asserted against
+the original elementary stream. Both integration tests pass on this machine
+with libx265 present.
+
+**What this does and does not establish.** It establishes that *if* the
+specification is right, this code produces playable video. It does **not**
+establish that the specification matches what the camera emits — nothing but a
+capture from real hardware can do that, and none exists yet, by anyone. The
+first person to capture one should keep the raw container bytes
+(`ttts_capture.py --raw`), because that artifact has never been published.
