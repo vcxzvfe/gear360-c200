@@ -1,7 +1,9 @@
 # SD-card root procedure — SM-C200
 
-**Status: ready for the zero-risk reconnaissance stage (Stage A). The interactive-shell
-stage (Stage B) has one unresolved transport question, stated plainly below.**
+**Status: ready for the zero-risk reconnaissance stage (Stage A). The RVF trigger itself (Stage B)
+is now fully designed in [`10-rvf-trigger.md`](10-rvf-trigger.md) — command id 20 = `EXE_LIVEVIEW`
+via an in-process ptrace call; the one open gate is whether Tizen SMACK permits root ptrace, which
+the card run records read-only.**
 
 Everything here was read directly out of the extracted root filesystem and the stock
 example files, not inferred. Evidence tags: `[VERIFIED-EXTRACTED]` (read from the camera's
@@ -122,9 +124,9 @@ the camera; Stage A leaves no persistent change.
 
 ## Stage B — interactive shell (one open transport question)
 
-Stage A may be enough to script the whole RVF trigger blind (put the trigger commands
-straight in a `.sh`). But an interactive shell is worth having, and here is the honest state
-of the transports:
+The whole RVF trigger is now scripted (B3 below → [`10-rvf-trigger.md`](10-rvf-trigger.md)); an
+interactive shell is a convenience on top of that, not a prerequisite. Here is the honest state of
+the (interactive-shell) transports:
 
 `[VERIFIED-EXTRACTED]` The rootfs has **no** `telnetd`, `busybox`, `dropbear`, `nc`,
 `socat`, `ncat`, or on-device `python`/`perl`. So a network shell needs *something* brought
@@ -147,15 +149,24 @@ built for this SoC's ABI (ARMv7 soft/hard-float — confirm against a rootfs bin
 `file`), and it is not firmware-shaped so it does not trip the flash rule. Keep it out of
 scope until Stage A confirms the ABI and the network situation.
 
-**B3 — no interactive shell; batch everything.** Given the whole goal reduces to "call the
-RVF trigger," a `.sh` can just *do it* — emit on D-Bus `org.bt.app_event`, or call the
-exported `DlnaRVF_ML_FJ_Start` — and tee the result to the card. This sidesteps the
-transport question entirely and is the most likely first success. It depends on Stage A's
-D-Bus introspection to get the argument encoding right.
+**B3 — no interactive shell; batch the RVF trigger directly. This is the plan, and it is now
+fully worked out in [`10-rvf-trigger.md`](10-rvf-trigger.md).** The whole goal reduces to "make
+`di-camera-app` enter RVF," and the teardown pinned exactly how: command id **20 =
+`EXE_LIVEVIEW`** driven into the app's own dispatcher. The earlier guesses in this bullet (emit on
+D-Bus `org.bt.app_event`, or call `DlnaRVF_ML_FJ_Start`) turned out to be **dead or fragile** —
+`[VERIFIED-BY-OBJDUMP]` the `app_event` signal carries only connection state, and the command path
+lives entirely in-process (fed by SAP/RFCOMM from the phone). So the trigger is an **in-process
+ptrace call** — `btSendEventToUI(8,0,20,0)`, the phone's exact call — made by a small static ARM
+injector (`tools/card/rvf-inject.c`) that the card script (`tools/card/rvf-start.sh`) stages into
+tmpfs and fires, then proves 7679 with `netstat`. It writes no block device and reverts the call
+before exit. **The one open gate is whether Tizen SMACK permits root ptrace; the card run answers
+that read-only.** See `10-rvf-trigger.md` §1 (the answer), §3 (fallbacks F1–F4), §5 (the ptrace/SMACK
+unknown).
 
-**Recommendation:** run Stage A. Its output picks B1 vs B3 for us with evidence instead of
-guesswork, and it may make B the whole ballgame (if `netstat` shows a way to reach the app
-directly). Do not put a foreign binary (B2) on the card until Stage A has run.
+**Recommendation:** run Stage A to settle B1 vs B2 (network shell) and confirm the port picture,
+then run the Stage-B card set from `10-rvf-trigger.md` (B3) — that is the actual RVF trigger and
+the most likely first success. Do not put a network-shell binary (B2) on the card until Stage A has
+run; the RVF injector (B3) is a separate, purpose-built helper and is the point of the exercise.
 
 ---
 
@@ -165,9 +176,11 @@ directly). Do not put a foreign binary (B2) on the card until Stage A has run.
    on the first Stage-A attempt; the card change is reversible, so a non-firing attempt costs
    nothing.
 2. **Whether `sdbd` offers TCP.** `[UNKNOWN]`. Stage A's `netstat` answers it read-only.
-3. **The D-Bus argument encoding for the liveview event.** `[UNKNOWN]`. Stage A's
-   `dbus-send` introspection of `org.bt.app` is the first step; the full encoding may need a
-   second batch pass.
+3. **The RVF trigger encoding.** *Resolved* — see [`10-rvf-trigger.md`](10-rvf-trigger.md).
+   Command id **20 = `EXE_LIVEVIEW`**, delivered in-process via `btSendEventToUI(8,0,20,0)`. The
+   D-Bus `org.bt.app_event` route once guessed here is `[VERIFIED-BY-OBJDUMP]` **dead** (state
+   signals only). The remaining open item is not the encoding but whether Tizen SMACK permits root
+   `ptrace` for the injector — the Stage-B card run records that from the injector's own stderr.
 
 None of these require writing to the camera to answer. Run Stage A, read the card, decide
 the next batch from evidence.
