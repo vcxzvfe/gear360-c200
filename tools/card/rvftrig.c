@@ -96,7 +96,16 @@ static void *trigger_thread(void *arg)
 __attribute__((constructor))
 static void rvftrig_init(void)
 {
-    logln("preload: constructor entered -- di-camera-app started with LD_PRELOAD");
+    /* Self-clean FIRST. The service is set Restart=always so a kill will
+     * reload us, but that also means if we ever crashed the app it would
+     * re-preload us on every restart -> a loop. Deleting our .so and the
+     * drop-in here makes a subsequent restart start the app WITHOUT us, so at
+     * most one trigger ever happens. We are already mapped into memory, so
+     * unlinking the file does not affect this running instance. */
+    unlink("/opt/usr/rvftrig.so");
+    unlink("/run/systemd/system/di-camera-app.service.d/rvf-preload.conf");
+
+    logln("preload: constructor entered -- app started with LD_PRELOAD; self-cleaned");
     pthread_t t;
     if (pthread_create(&t, 0, trigger_thread, 0) != 0)
         logln("preload: pthread_create FAILED");
