@@ -56,3 +56,39 @@ the Bluetooth receive thread uses. The card script installs the drop-in, copies
 the `.so`, and restarts `di-camera-app` via `systemd-run`.
 
 This is `tools/card/rvftrig.c` + the `rvf-start.sh` LD_PRELOAD variant.
+
+---
+
+## v8-v10: worker-thread injection, and why ptrace injection is a dead end
+
+| Run | Target | Result |
+|---|---|---|
+| v8 | worker threads (main pid's tasks), plain waitpid | attach failed `No child process` -- waitpid needs `__WALL` for non-main tids. App did NOT crash (attach never completed). |
+| v8+`__WALL` | worker 261 (`shell_di_app`, `do_msgrcv`) | getpid injection **crashed the app** (reboot). |
+| v9 | (recon only) | `[VERIFIED-DEVICE]` thread map: every thread is asleep in a syscall. main=poll_schedule_timeout; workers in do_msgrcv or futex_wait_queue_me; none in state R. |
+| v10 | worker 262 (`recorder`, `futex_wait_queue_me`) | getpid injection **crashed the app too** (reboot). |
+
+**Conclusion `[VERIFIED-DEVICE]`: simple ptrace call-injection cannot work on this
+app.** Every thread is blocked in a syscall, and a hijack+restore corrupts that
+syscall's restart on return; the thread then dies, and with it the whole
+process. This held for the main thread (poll), a `do_msgrcv` worker, AND a
+`futex_wait_queue_me` worker -- the glibc futex EINTR-retry did not save it. No
+choice of thread or function avoids it. A syscall-aware injector (à la frida,
+moving the thread out of its syscall before the call) would be needed, which is
+a large undertaking with no guarantee on this SoC.
+
+### Remaining routes (none is a quick ptrace tweak)
+1. **UART console.** `ttyAMA0` runs a getty. Soldering the pads gives a
+   persistent root shell in NORMAL mode (not the one-shot script mode), where a
+   real cross-compiled `gdb` can do syscall-aware injection, and which is also a
+   brick-recovery channel. Hardware work, but the most likely to finally succeed.
+2. **Phone-in-the-loop.** An Android phone + the ported Gear 360 Manager starts
+   RVF the normal way; the Mac then pulls the stream with the already-built
+   `tools/rvf_soap.py` + `tools/ttts.py`. Fastest path to actual video; sidesteps
+   the whole injection problem.
+3. **Persistent LD_PRELOAD.** Would need the drop-in on a persistent partition
+   (script mode reboots and clears /run). That means writing the rootfs (eMMC),
+   the one genuinely brick-capable action, and is not recommended.
+4. **BlueZ SAP emulation** from a second Linux Bluetooth host sending the real
+   `{"execute":"liveview"}` frame. Non-invasive to the app, but a substantial
+   SAP/RFCOMM implementation effort.
