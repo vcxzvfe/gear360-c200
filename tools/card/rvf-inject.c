@@ -67,10 +67,30 @@ struct arm_regs { unsigned long uregs[18]; };
 
 int main(int argc, char **argv)
 {
+    /* Two modes:
+     *   <pid> probe                                   -- read-only: attach + detach only.
+     *   <pid> <arm|thumb> <func_hex> <r0> <r1> <r2> <r3>  -- inject a call.
+     * The probe exists to separate "does SMACK/yama permit ptrace at all" from
+     * "does the injected call crash the app". A crash-inducing call must never be
+     * the thing that first tells us ptrace was allowed. */
+    if (argc == 3 && strcmp(argv[2], "probe") == 0) {
+        pid_t p = (pid_t)strtol(argv[1], NULL, 0);
+        if (ptrace(PTRACE_ATTACH, p, 0, 0) < 0) {
+            fprintf(stderr, "PROBE FAIL: PTRACE_ATTACH(%d): %s\n", p, strerror(errno));
+            return 3;  /* EPERM here = SMACK/yama blocked ptrace */
+        }
+        int st;
+        waitpid(p, &st, 0);
+        ptrace(PTRACE_DETACH, p, 0, 0);
+        printf("PROBE OK: ptrace attach+detach on pid %d succeeded\n", p);
+        return 0;
+    }
+
     if (argc != 8) {
         fprintf(stderr,
-            "usage: %s <pid> <arm|thumb> <func_hex> <r0> <r1> <r2> <r3>\n",
-            argv[0]);
+            "usage: %s <pid> probe\n"
+            "   or: %s <pid> <arm|thumb> <func_hex> <r0> <r1> <r2> <r3>\n",
+            argv[0], argv[0]);
         return 2;
     }
 
