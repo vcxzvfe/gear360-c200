@@ -46,13 +46,33 @@ except ImportError:  # when imported as tools.rvf_soap
         open_stream,
     )
 
-# The control surface lives on 7676; the recovered device description puts the
-# ContentDirectory controlURL at /smp_3_, the event sub at /smp_4_, the SCPD at
-# /smp_5_. Verbatim from libdi-network-dlna-rvf.so @0x7778c / @0x7aaf9.
+# The control surface lives on 7676.
+#
+# CORRECTION, from a real SD card that had been in a Gear 360: the device's own
+# DeviceDescription.xml (written by the camera to
+# /mnt/mmc/.config/RVF/xml/DeviceDescription.xml) maps the ContentDirectory
+# service as:
+#     controlURL  /smp_4_
+#     eventSubURL /smp_5_
+#     SCPDURL     /smp_3_
+# The firmware teardown, reading a template out of libdi-network-dlna-rvf.so,
+# reported controlURL=/smp_3_ and SCPDURL=/smp_5_ -- i.e. rotated. An earlier
+# version of this file followed the teardown and would have POSTed the SOAP at
+# the SCPD document instead of the control endpoint.
+#
+# The card is the authoritative artifact: it is what the camera actually
+# serves. But since the card and the library template disagree, and a card may
+# have come from a different firmware than the unit under test, the tool reads
+# the device description at run time when it can, and falls back to trying both
+# mappings rather than trusting either constant.
 CONTROL_PORT = 7676
 STREAM_PORT = 7679
-CONTROL_URL = "/smp_3_"
-SCPD_URL = "/smp_5_"
+CONTROL_URL = "/smp_4_"
+SCPD_URL = "/smp_3_"
+CONTROL_URL_FALLBACKS = ("/smp_4_", "/smp_3_")
+#: Where the device description itself is served. Reading this settles the
+#: mapping for whatever unit is actually in front of you.
+DEVICE_DESC_PATHS = ("/smp_0_", "/smp_1_", "/smp_2_", "/dmr", "/")
 SERVICE_TYPE = "urn:schemas-upnp-org:service:ContentDirectory:1"
 
 # The device derives control-point identity from the User-Agent by SUBSTRING
@@ -103,20 +123,71 @@ def _http(host: str, port: int, path: str, *, method: str = "GET",
         return exc.code, dict(exc.headers or {}), (exc.read(65536) or b"")
 
 
-def soap_set_operation_state(host: str, state: str = STATE_RVF,
-                             timeout: float = 10.0) -> tuple[int, bytes]:
-    """Send SetOperationState. Returns (http_status, body)."""
-    args = f"<StateEvent>{state}</StateEvent>"
-    body = SOAP_ENVELOPE.format(action="SetOperationState", svc=SERVICE_TYPE,
+def discover_control_url(host: str) -> str | None:
+    """Read the device description and return the ContentDirectory controlURL.
+
+    Trusting a hardcoded constant here is what produced the /smp_3_ vs /smp_4_
+    mistake, so ask the device when it will answer.
+    """
+    import re
+
+    for path in DEVICE_DESC_PATHS:
+        status, _, body = _http(host, CONTROL_PORT, path)
+        if status != 200 or b"ContentDirectory" not in body:
+            continue
+        text = body.decode("utf-8", "replace")
+        for service in re.findall(r"<service>.*?</service>", text, re.S):
+            if "ContentDirectory" not in service:
+                continue
+            match = re.search(r"<controlURL>\s*([^<\s]+)\s*</controlURL>", service)
+            if match:
+                return match.group(1)
+    return None
+
+
+def soap_action(host: str, action: str, args: str, control_url: str,
+                timeout: float = 10.0) -> tuple[int, bytes]:
+    """Send one SOAP action to the given control URL."""
+    body = SOAP_ENVELOPE.format(action=action, svc=SERVICE_TYPE,
                                 args=args).encode("utf-8")
     headers = {
         "Content-Type": 'text/xml; charset="utf-8"',
-        "SOAPACTION": f'"{SERVICE_TYPE}#SetOperationState"',
+        "SOAPACTION": f'"{SERVICE_TYPE}#{action}"',
         "Connection": "close",
     }
-    status, _, resp = _http(host, CONTROL_PORT, CONTROL_URL, method="POST",
+    status, _, resp = _http(host, CONTROL_PORT, control_url, method="POST",
                             body=body, headers=headers, timeout=timeout)
     return status, resp
+
+
+def soap_set_operation_state(host: str, state: str = STATE_RVF,
+                             control_url: str | None = None,
+                             timeout: float = 10.0) -> tuple[int, bytes, str]:
+    """Send SetOperationState. Returns (status, body, control_url_used).
+
+    If no control URL is given, the device description is consulted; failing
+    that, every known mapping is tried rather than guessing one.
+    """
+    args = f"<StateEvent>{state}</StateEvent>"
+    candidates = ([control_url] if control_url
+                  else [discover_control_url(host) or ""] + list(CONTROL_URL_FALLBACKS))
+    last: tuple[int, bytes, str] = (0, b"", "")
+    for url in [c for c in candidates if c]:
+        status, resp = soap_action(host, "SetOperationState", args, url, timeout)
+        last = (status, resp, url)
+        if status < 400:
+            return last
+    return last
+
+
+def soap_get_information(host: str, control_url: str,
+                         timeout: float = 10.0) -> tuple[int, bytes]:
+    """GetInfomation (Samsung's spelling) returns StreamUrl once RVF is up.
+
+    Its SCPD declares in: GPSINFO, out: GETINFORMATIONRESULT, StreamUrl.
+    """
+    return soap_action(host, "GetInfomation", "<GPSINFO></GPSINFO>",
+                       control_url, timeout)
 
 
 def probe(host: str) -> dict[str, object]:
@@ -166,9 +237,24 @@ def main(argv: list[str] | None = None) -> int:
             f"{state.get('scpd_len')} bytes. Stopping (--info-only).")
         return EXIT_OK
 
-    say("\n7676 is OPEN -- sending SetOperationState(changeToRVF) ...")
-    status, resp = soap_set_operation_state(args.host)
-    say(f"  SOAP -> HTTP {status}")
+    discovered = discover_control_url(args.host)
+    if discovered:
+        say(f"\n  device description says controlURL = {discovered}")
+    else:
+        say(f"\n  could not read the device description; will try "
+            f"{', '.join(CONTROL_URL_FALLBACKS)} in turn")
+
+    say("7676 is OPEN -- sending SetOperationState(changeToRVF) ...")
+    status, resp, used = soap_set_operation_state(args.host, control_url=discovered)
+    say(f"  SOAP -> HTTP {status}  (control URL {used})")
+    if status < 400:
+        info_status, info_body = soap_get_information(args.host, used)
+        say(f"  GetInfomation -> HTTP {info_status}")
+        if info_status < 400:
+            import re
+            url_match = re.search(rb"<StreamUrl>(.*?)</StreamUrl>", info_body, re.S)
+            if url_match:
+                say(f"  StreamUrl = {url_match.group(1).decode('utf-8', 'replace')}")
     if status in (401, 503):
         say("  refused by the User-Agent ACL despite the SEC_RVF_ML_ prefix. "
             "This is new information: the ACL is armed. Body:")

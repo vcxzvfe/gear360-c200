@@ -286,3 +286,94 @@ exhausted:
 `[VERIFIED]` **No zero-touch path remains.** The next move has to be Stage A of
 the SD-card procedure (`09-root-procedure.md`) — which is still zero block
 writes, but does put a card in the camera.
+
+---
+
+## 2026-07-27 — A used SD card carried the camera's own service description
+
+An SD card that had been in a Gear 360 was found to contain
+`/.config/` written by the camera itself. `[VERIFIED]` This is the authoritative
+artifact for the RVF surface — it is what the camera actually serves — and it
+is readable with no rooting, no trigger, and no risk. Anyone with a used
+Gear 360 card already has it.
+
+### It corrects the control URL, which would have broken the SOAP silently
+
+The firmware teardown, reading a template out of `libdi-network-dlna-rvf.so`,
+reported `controlURL=/smp_3_`, `eventSubURL=/smp_4_`, `SCPDURL=/smp_5_`.
+
+The camera's own `DeviceDescription.xml` says otherwise:
+
+```xml
+<controlURL>/smp_4_</controlURL>
+<eventSubURL>/smp_5_</eventSubURL>
+<SCPDURL>/smp_3_</SCPDURL>
+```
+
+`[VERIFIED]` The mapping is rotated. **`tools/rvf_soap.py` was POSTing the SOAP
+at `/smp_3_`, which is the read-only SCPD document, not the control endpoint.**
+Since 7676 has never been open in any mode reached so far, this had not yet
+produced a visible failure — it would have surfaced later as an inexplicable
+error at the one moment the camera was finally cooperating. Fixed: the tool now
+reads the device description at run time and falls back to trying both mappings
+rather than trusting any constant.
+
+### Ports the scans never covered
+
+`UPnPConfig.xml`, verbatim:
+
+```
+WebServerPort                 5215
+UPnPServerPort                5216
+HTTPTCPServerPort             7676
+HTTPUDPServerPort            24234
+HTTPMulticastServerPort       1900
+HTTPMulticastEventServerPort  7900
+HTTPStreamingPort             7679
+AutoAuthenticate                 0
+```
+
+and `http_stream.ini` gives `HTTPPort=9001`, `CDSPort=5301`,
+`StreamDir=DCIM/100PHOTO/`.
+
+`[VERIFIED]` This confirms 7676/7679/9001 independently of the disassembly. It
+also shows **`24234` sits above the 1–10000 sweep this project has been running,
+so it has never been scanned**, and `1900` is SSDP — a **UDP** port, while every
+scan so far has been TCP-only. Neither is likely to answer in Street View mode
+(the whole UPnP subsystem is unstarted there) but neither has been tested.
+
+`AutoAuthenticate=0` is relevant to the teardown's open question about whether
+the `SEC_RVF_ML_` User-Agent ACL is armed. It is suggestive, not conclusive —
+it is a different mechanism from the ACL filter — but it points the same way.
+
+### The full remote-control surface, from the camera's own SCPD
+
+`ContentDirectory_1.xml` on the card declares **50 actions**. This is far more
+than a stream: it is the complete remote control API, and it has not been
+published before.
+
+Relevant to this project: `SetOperationState` (the RVF switch), `GetInfomation`
+(in: `GPSINFO`; out: `GETINFORMATIONRESULT`, **`StreamUrl`**), `SetStreamQuality`,
+`StopStreaming`, `X_PauseStreaming`.
+
+Beyond streaming: `Shot`, `StartRecord`, `StopRecord`, `StartShot`, `StopShot`,
+`SetResolution`, `X_SetDualResolution`, `SetMovieResolution`,
+`X_SetDualMovieResolution`, `SetEV`, `SetISO`, `SetWB`, `SetDialMode`,
+`X_SetHDR`, `X_SetSharpness`, `X_SetWindCut`, `X_SetTimeLapse`,
+`X_SetLoopingVideo`, `X_SetSwitchLens`, `X_SetTimer`, `X_IntervalShot`,
+`X_SetInitialView`, `X_SetViewType`, `X_GetStorage`, `X_SetFormat`,
+`X_DeleteFile`, `X_SetLED`, `X_SetBeep`, `X_SetAutoPowerOff`, `GetIP`, and more.
+
+**Consequence:** once RVF is reachable, the camera is fully controllable over
+plain SOAP — not just watchable. The `SetOperationState` argument
+`ChangeStateEvent` is confirmed on the card as `<dataType>ui4</dataType>`, which
+is exactly the declaration the teardown found the handler contradicts by doing a
+case-insensitive string compare. Send `changeToRVF` as a string.
+
+### Note on the card itself
+
+`[VERIFIED]` The card in use here is **ExFAT**, not FAT32, and the camera had
+clearly written to it (`DCIM`, `SYSTEM`, `.config`), so the camera reads ExFAT.
+Whether `dfmsd` script mode also reads it is `[UNKNOWN]`; if the recon chain
+does not fire, filesystem type is the second thing to vary after byte-exactness
+of `info.tg`.
