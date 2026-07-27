@@ -1,92 +1,83 @@
 #!/bin/sh
-# rvf-start.sh (v4) -- mechanism-isolation run for the SM-C200.
+# rvf-start.sh (v5) -- LD_PRELOAD RVF trigger for the SM-C200, via dfmsd.
 #
-# Bench history:
-#   v2: loop guard OK; PROBE proved SMACK permits root ptrace. Candidate C1
-#       (btSendEventToUI, main-thread hijack) crashed di-camera-app.
-#   v3: candidate F2 (handle_bt_app_receive_command) ALSO crashed it. Two
-#       different call sites crashing => the problem is hijacking the main
-#       thread to run the RVF chain synchronously, not any one function. Also,
-#       the getpid mechanism test was skipped because the libc match was wrong
-#       (device libc is /lib/libc-2.13.so, not libc.so.6).
+# ptrace call-injection was proven unworkable (v1-v4, 11-injection-bench-log.md):
+# hijacking di-camera-app's main thread crashes it, even for getpid. v5 instead
+# makes the app load rvftrig.so via LD_PRELOAD at a service RESTART, so the
+# trigger runs inside the fully-initialised app on its OWN thread -- the phone's
+# real context. No ptrace.
 #
-# v4 does ONE thing: inject libc getpid() -- a pure, side-effect-free call --
-# and report whether di-camera-app survives. NO RVF injection this run, so it
-# cannot crash. The result decides the next strategy:
-#   * app SURVIVES getpid  -> the inject+restore machinery is sound; the RVF
-#     crashes are purely about running that chain in the hijacked main thread.
-#     Next: run the trigger from a NON-main thread (inject a dlopen of a tiny
-#     .so that spawns its own thread -- the phone's real call context).
-#   * app DIES on getpid    -> main-thread hijack is itself unsafe on this app;
-#     even a dlopen injection would crash. Next: LD_PRELOAD at service restart,
-#     no ptrace at all.
+# Mechanism (all writes are to tmpfs /run, ext4 /opt/usr, and the SD card --
+# never the camera's internal-firmware eMMC partitions on mmcblk0):
+#   1. copy rvftrig.so to /opt/usr (ext4 rw, exec-capable)
+#   2. systemd drop-in in /run (tmpfs) adds Environment=LD_PRELOAD=...
+#   3. systemd-run launches the restart from OUTSIDE dfmsd's cgroup, so it
+#      survives di-camera-app being killed (which would otherwise kill us)
+#   4. the new di-camera-app loads rvftrig.so; its thread waits, calls
+#      btSendEventToUI(8,0,20,0), and logs to /mnt/mmc/rvf-out/50-preload.txt
+#      including whether 7679 came up.
 #
-# Loop guard + per-step sync. Writes only the SD card and tmpfs.
+# After running: wait ~60s from power-on, then power off and read
+# rvf-out/50-preload.txt.
 
 OUT=/mnt/mmc/rvf-out
 TG=/mnt/mmc/info.tg
+SO_SRC=/mnt/mmc/rvftrig.so
+SO_DST=/opt/usr/rvftrig.so
+DROPDIR=/run/systemd/system/di-camera-app.service.d
+DROPIN=$DROPDIR/rvf-preload.conf
 
-rm -f "$TG" 2>/dev/null        # STEP 0 loop guard: at most one run
+rm -f "$TG" 2>/dev/null            # loop guard: at most one run
 sync
-
 mkdir -p "$OUT"
 exec 2>"$OUT/00-stderr.txt"
 prog() { echo "$@" >> "$OUT/00-progress.txt"; sync; }
-prog "STEP0: info.tg deleted (loop guard); v4 (getpid mechanism test only)"
+prog "STEP0: info.tg deleted (loop guard); v5 LD_PRELOAD approach"
 
 id > "$OUT/01-id.txt" 2>&1; sync
-PID=$(pidof di-camera-app 2>/dev/null)
-[ -z "$PID" ] && PID=$(ps 2>/dev/null | awk '/di-camera-app/ && !/awk/ {print $1; exit}')
-prog "STEP1: di-camera-app pid=$PID"
-[ -z "$PID" ] && { prog "FATAL: di-camera-app not running"; touch "$OUT/DONE"; sync; exit 1; }
-cat "/proc/$PID/maps" > "$OUT/03-maps.txt" 2>/dev/null; sync
+OLDPID=$(pidof di-camera-app 2>/dev/null)
+prog "STEP1: di-camera-app old pid=$OLDPID"
 
-echo 0 > /proc/sys/kernel/yama/ptrace_scope 2>/dev/null
-TGT=$(cat "/proc/$PID/attr/current" 2>/dev/null)
-[ -n "$TGT" ] && echo -n "$TGT" > /proc/self/attr/current 2>/dev/null
-prog "STEP2: ptrace gating relaxed"
-
-INJ=""
-for d in /tmp /run /dev/shm /opt/usr/tmp; do
-    [ -d "$d" ] || continue
-    cp /mnt/mmc/rvf-inject "$d/rvf-inject" 2>/dev/null || continue
-    chmod 0755 "$d/rvf-inject" 2>/dev/null
-    "$d/rvf-inject" >/dev/null 2>&1
-    [ $? -eq 2 ] && { INJ="$d/rvf-inject"; break; }
-    rm -f "$d/rvf-inject"
-done
-prog "STEP3: injector staged at ${INJ:-NONE}"
-[ -z "$INJ" ] && { prog "FATAL: cannot stage injector"; touch "$OUT/DONE"; sync; exit 1; }
-
-alive() { ps 2>/dev/null | grep -q 'di-camera-app'; }
-
-# read-only probe (re-confirm)
-"$INJ" "$PID" probe > "$OUT/06-probe.txt" 2>&1
-prog "STEP4: probe rc=$? :: $(cat "$OUT/06-probe.txt")"
-
-# ---- the one experiment: harmless getpid() injection --------------------
-# Device libc is /lib/libc-2.13.so; getpid is at file offset 0x95108 (ARM).
-# Match the r-xp (code) segment of any /lib/libc-<version>.so.
-LIBC_BASE=$(awk '$6 ~ /\/libc-[0-9]/ && $2=="r-xp" {split($1,a,"-"); print a[1]; exit}' "/proc/$PID/maps")
-prog "STEP5: libc base = ${LIBC_BASE:-NOT_FOUND}"
-if [ -z "$LIBC_BASE" ]; then
-    prog "FATAL: libc base not found; dumping libc maps lines to 08-libc-maps.txt"
-    grep -i libc "/proc/$PID/maps" > "$OUT/08-libc-maps.txt" 2>&1; sync
+# --- 1. place the .so where it can be exec'd/loaded --------------------------
+if ! cp "$SO_SRC" "$SO_DST" 2>>"$OUT/00-stderr.txt"; then
+    prog "FATAL: could not copy rvftrig.so to $SO_DST (is it on the card?)"
     touch "$OUT/DONE"; sync; exit 1
 fi
-GP=$(printf '0x%x' $((0x$LIBC_BASE + 0x95108)))
-prog "STEP6: injecting getpid @ $GP  (expect OK r0=$(printf '0x%x' "$PID"))"
-"$INJ" "$PID" arm "$GP" 0 0 0 0 > "$OUT/07-getpid.txt" 2>&1
-prog "STEP7: getpid injector rc=$? :: $(cat "$OUT/07-getpid.txt")"
-sleep 1
-if alive; then
-    prog "RESULT: di-camera-app ALIVE after getpid -> inject mechanism is SOUND."
-    prog "        Next strategy: non-main-thread call (dlopen a .so that spawns a thread)."
-else
-    prog "RESULT: di-camera-app DIED on getpid -> main-thread hijack is unsafe on this app."
-    prog "        Next strategy: LD_PRELOAD at service restart (no ptrace)."
+chmod 0755 "$SO_DST" 2>/dev/null
+prog "STEP2: rvftrig.so -> $SO_DST ($(stat -c %s "$SO_DST" 2>/dev/null || echo '?') bytes)"
+
+# --- 2. systemd drop-in adding LD_PRELOAD (tmpfs, no rootfs write) -----------
+mkdir -p "$DROPDIR"
+{
+    echo "[Service]"
+    echo "Environment=LD_PRELOAD=$SO_DST"
+} > "$DROPIN"
+sync
+prog "STEP3: drop-in written: $DROPIN"
+cat "$DROPIN" >> "$OUT/02-dropin.txt" 2>/dev/null; sync
+
+# reset our own env so we don't get preloaded into helper processes
+systemctl daemon-reload 2>>"$OUT/00-stderr.txt"
+prog "STEP4: daemon-reload done"
+
+# --- 3. restart di-camera-app from OUTSIDE our cgroup ------------------------
+# systemd-run hands the restart to the systemd manager in its own transient
+# unit, so it completes even though restarting di-camera-app kills dfmsd (us).
+prog "STEP5: launching restart via systemd-run (we may be killed here; that's expected)"
+sync
+systemd-run --collect --unit=rvf-restart /usr/bin/systemctl restart di-camera-app \
+    >> "$OUT/03-systemd-run.txt" 2>&1
+RC=$?
+prog "STEP6: systemd-run rc=$RC (if we got here, dfmsd survived the restart)"
+
+# Fallback if systemd-run is unavailable/failed: detach a restart and exit.
+if [ "$RC" -ne 0 ]; then
+    prog "STEP6: systemd-run failed; trying setsid detached restart"
+    setsid sh -c 'sleep 1; /usr/bin/systemctl restart di-camera-app' \
+        >> "$OUT/03-systemd-run.txt" 2>&1 &
 fi
 
-rm -f "$INJ" 2>/dev/null
+prog "STEP7: restart requested. The new di-camera-app should LD_PRELOAD rvftrig.so."
+prog "       Watch rvf-out/50-preload.txt for the trigger + 7679 result."
 touch "$OUT/DONE"; sync
-prog "DONE"
+prog "DONE (script side; the .so writes 50-preload.txt after restart)"
