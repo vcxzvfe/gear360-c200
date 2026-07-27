@@ -450,3 +450,35 @@ proved a card script runs as root.
 **Project status:** the phone-free path is no longer blocked on an unknown
 mechanism. It is blocked on three integers, recoverable from a binary already on
 disk, then executable through a mechanism already proven to work.
+
+---
+
+## 2026-07-27 — Two consequential details from the recon dump
+
+### A serial getty is running on ttyAMA0
+
+`[VERIFIED-DEVICE]` `systemctl` shows `serial-getty@ttyAMA0.service ... loaded active
+running`. The teardown had marked "UART usable on retail silicon" as `[UNKNOWN]` because the
+released bootloader console defines targeted a dev board. This is a partial answer at the OS
+level: **a login getty is live on ttyAMA0.** If the UART pads can be found and wired
+(115200 8N1), that is a persistent root login shell independent of the SD card — a better
+working channel than re-inserting a card each time, and a genuine rescue path if a later step
+ever stops the system booting to `di-camera-app`. It does not prove the bootloader prompt is
+reachable (that is what would rescue a bad kernel), only that the running system offers a
+console login. Worth locating the pads on the AQK1 unit.
+
+### dfmsd runs as a child of di-camera-app
+
+`[VERIFIED-DEVICE]` `ps -ef`: `di-camera-app` is PID 252 (root); `dfmsd` is PID 288 with
+PPID 252. So the SD-card script does not run in isolation at boot — it runs **while
+di-camera-app is already up and the D-Bus system bus is available** (`dbus.service` running).
+This is exactly the environment a D-Bus trigger needs: the target app and bus are live when
+our script executes. It also means the app's own state machine is running, which matters if
+the trigger must be delivered as an event the app is waiting for rather than a cold call.
+
+### Filesystem writability, for the record
+
+`[VERIFIED-DEVICE]` `/` is `ext4 ro`; `/opt` (`mmcblk0p10`) and `/opt/usr` (`mmcblk0p13`) are
+`ext4 rw`; the SD card (`mmcblk1p1`) is `exfat rw`. So the root filesystem is read-only as
+mounted — consistent with the teardown's warning that persistent rootfs edits require a
+remount and are where bricks come from. Nothing we are doing needs a rootfs write.
