@@ -71,3 +71,52 @@ open. With it we can:
   and the next step is to set the USB mode persistently instead.
 - Whether `/dev/ttyGS0` appears once the acm gadget is enabled (it should, from
   the g_serial/f_acm driver).
+
+---
+
+## 2026-07-28 — SUCCESS: root shell over USB, via sdb
+
+`[VERIFIED-DEVICE]` It works. The camera enumerated on the Mac as `04e8:6860`
+with interfaces:
+
+```
+if0  class 2/2/1   (CDC-ACM control)
+if1  class 10/0/0  (CDC-ACM data)
+if2  class 255/32/2 (vendor -- SDB)   bulk out 0x02, in 0x82
+```
+
+`tools/sdb_usb.py` (pure pyusb, no Tizen Studio, no serial driver — macOS binds
+no driver to the vendor interface so libusb claims it) connected and ran:
+
+```
+[connected] device::SMC200::0
+uid=0(root) gid=0(root)
+Linux drime5 3.5.0 #5 PREEMPT ... armv7l GNU/Linux
+```
+
+**What broke v11 and how v12 fixed it:** the v11 device log proved our gadget
+switch worked (`funcs_fconf=acm,sdb`, `/dev/ttyGS0` created, agetty+sdbd
+running). But on USB connect, `deviced` re-applied the persistent selector
+`db/usb/sel_mode` (=1, mtp), clobbering the gadget → the Mac saw PTP. v12 sets
+`db/usb/sel_mode`=3 (acm,sdb, persistent in /opt) so deviced itself brings up
+sdb; an unplug/replug let deviced re-apply it. sdbd runs `rootshell_mode`, so no
+RSA auth — a straight root shell.
+
+macOS never exposed the ACM as a `/dev/cu.usbmodem` serial (its CDC parsing
+rejects this composite), which is why the serial route failed — but the sdb
+interface over libusb sidesteps that entirely.
+
+### Usage
+```bash
+python3 tools/sdb_usb.py --probe                 # show interfaces; find sdb
+python3 tools/sdb_usb.py "id; uname -a"          # one-shot command
+python3 tools/sdb_usb.py                          # interactive root shell
+```
+
+### What this unlocks
+The insert-card → reboot → read cycle is over. We have a live root shell to
+iterate in. Open questions to settle live: (1) does `db/usb/sel_mode`=3 survive
+a reboot into NORMAL mode (viewfinder running) without the volatile
+`memory/sysman/sdb_sel` — i.e. is the shell stable across power cycles; (2) with
+a live shell, the RVF trigger can be attacked with file transfer (openssl
+base64 is on the device) and immediate feedback, instead of one card per boot.
