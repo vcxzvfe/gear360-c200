@@ -1,98 +1,92 @@
 #!/bin/sh
-# rvf-start.sh (v10) -- inject only onto futex-blocked worker threads.
+# rvf-start.sh (v11) -- bring up an interactive root shell over the USB cable.
 #
-# v9's thread map showed every thread is asleep in a syscall, and which one:
-#   252 di-camera-app  poll_schedule_timeout  -- the main loop; must stay free
-#   261 shell_di_app   do_msgrcv              -- what v8 crashed on
-#   262 recorder       futex_wait_queue_me    }
-#   264 MCB_Receiver   futex_wait_queue_me    }  the tolerant ones
-#   265 MCB_Sender     futex_wait_queue_me    }
-#   281 SIF Main       futex_wait_queue_me    }
-#   282 SIF FileHandler futex_wait_queue_me   }
-#   26x ui_th_* / DFMS do_msgrcv
+# Big pivot. ptrace injection is a dead end (v1-v10). But the firmware's USB
+# gadget supports a mode that exposes a CDC-ACM serial console AND sdb:
+#   deviced usb-configurations.xml, mode 3 (acm,sdb):
+#     funcs_fconf = "acm,sdb", idVendor 04e8, idProduct 6860, iProduct SM-C200
+#   and /etc/passwd has root WITH NO PASSWORD (root::0:0:...).
 #
-# A hijack+restore interrupts the target thread's syscall. do_msgrcv returns
-# EINTR and those threads do not retry -> the thread, and thus the whole
-# process, dies. But threads in futex_wait_queue_me are inside a glibc pthread
-# wait whose futex wrapper RETRIES on EINTR, so they survive the interruption.
-# So v10 injects ONLY futex-blocked workers (matched by wchan, since tids shift
-# per boot), never the do_msgrcv/poll ones. The freed main loop consumes the
-# enqueued post and binds 7679.
+# So this script (root, in script mode) reconfigures the USB gadget to acm,sdb
+# and starts a PASSWORDLESS root shell on /dev/ttyGS0 via `agetty --autologin
+# root` (bypassing login/securetty entirely). Then it sleeps to hold script
+# mode open so the gadget stays up and dfmsd does not reboot.
 #
-# Per target: harmless getpid first (must keep the app alive), then
-# btSendEventToUI(8,0,20,0). Checks 7679 inline, before the script-mode reboot.
-# Writes only the SD card.
+# Result: plug the USB cable into the Mac and a /dev/cu.usbmodem* serial port
+# appears; `screen /dev/cu.usbmodem... 115200` gives a live root shell. No
+# soldering, no sdb client, no card-reboot cycle -- an INTERACTIVE shell at last.
+#
+# Writes only sysfs (volatile, reset by reboot; not a block device) and the SD
+# card. No eMMC write.
 
 OUT=/mnt/mmc/rvf-out
+U=/sys/class/usb_mode/usb0
 rm -f /mnt/mmc/info.tg 2>/dev/null; sync
 mkdir -p "$OUT"
 exec 2>"$OUT/00-stderr.txt"
-prog() { echo "$@" >> "$OUT/00-progress.txt"; sync; }
-prog "STEP0: loop guard; v10 futex-thread injection"
-
+log() { echo "$@" >> "$OUT/00-progress.txt"; sync; }
+log "STEP0: v11 USB-console; loop guard armed"
 id > "$OUT/01-id.txt" 2>&1
-PID=$(pidof di-camera-app 2>/dev/null); [ -z "$PID" ] && PID=$(pgrep di-camera-app | head -1)
-prog "STEP1: main pid=$PID"
-[ -z "$PID" ] && { prog "FATAL no di-camera-app"; touch "$OUT/DONE"; sync; exit 1; }
-cat /proc/$PID/maps > "$OUT/03-maps.txt" 2>/dev/null; sync
 
-echo 0 > /proc/sys/kernel/yama/ptrace_scope 2>/dev/null
-TGT=$(cat /proc/$PID/attr/current 2>/dev/null); [ -n "$TGT" ] && echo -n "$TGT" > /proc/self/attr/current 2>/dev/null
+# record the gadget's current state
+{ echo "funcs_fconf=$(cat $U/funcs_fconf 2>&1)"
+  echo "idProduct=$(cat $U/idProduct 2>&1)"
+  ls -la /sys/class/usb_mode/ 2>&1; } > "$OUT/40-usb-before.txt"
+sync
+log "STEP1: usb0 exists? $( [ -d "$U" ] && echo yes || echo NO )"
+if [ ! -d "$U" ]; then
+    log "FATAL: /sys/class/usb_mode/usb0 missing; dumping /sys/class/usb_mode"
+    ls -la /sys/class/usb_mode/ > "$OUT/41-usbmode-ls.txt" 2>&1; sync
+    # keep alive anyway so we can inspect over... nothing. just exit.
+    touch "$OUT/DONE"; sync; exit 1
+fi
 
-INJ=""
-for d in /tmp /run /dev/shm /opt/usr/tmp; do
-    [ -d "$d" ] || continue
-    cp /mnt/mmc/rvf-inject "$d/rvf-inject" 2>/dev/null || continue
-    chmod 0755 "$d/rvf-inject" 2>/dev/null
-    "$d/rvf-inject" >/dev/null 2>&1; [ $? -eq 2 ] && { INJ="$d/rvf-inject"; break; }
-    rm -f "$d/rvf-inject"
-done
-prog "STEP2: injector at ${INJ:-NONE}"
-[ -z "$INJ" ] && { prog "FATAL no injector"; touch "$OUT/DONE"; sync; exit 1; }
+# --- switch gadget to mode 3 (acm,sdb), matching deviced's sysfs sequence ----
+echo 0        > $U/enable            2>>"$OUT/00-stderr.txt"
+echo 04e8     > $U/idVendor          2>>"$OUT/00-stderr.txt"
+echo 6860     > $U/idProduct         2>>"$OUT/00-stderr.txt"
+echo 0        > $U/bDeviceClass      2>/dev/null
+echo 0        > $U/bDeviceSubClass   2>/dev/null
+echo 0        > $U/bDeviceProtocol   2>/dev/null
+echo acm,sdb  > $U/funcs_fconf       2>>"$OUT/00-stderr.txt"
+echo null     > $U/funcs_sconf       2>/dev/null
+echo SM-C200  > $U/iProduct          2>/dev/null
+echo 1        > $U/enable            2>>"$OUT/00-stderr.txt"
+sync
+log "STEP2: gadget set -> funcs_fconf=$(cat $U/funcs_fconf 2>&1)"
+sleep 2
 
-alive() { ps 2>/dev/null | grep -q di-camera-app; }
-up7679() { netstat -lntp 2>/dev/null | grep -q ':7679'; }
+# --- confirm the ACM serial node appeared -----------------------------------
+ls -la /dev/ttyGS0 > "$OUT/42-ttyGS0.txt" 2>&1
+log "STEP3: /dev/ttyGS0 -> $(ls -la /dev/ttyGS0 2>&1)"
 
-LIBC_BASE=$(awk '$6 ~ /\/libc-[0-9]/ && $2=="r-xp"{split($1,a,"-");print a[1];exit}' /proc/$PID/maps)
-BT_BASE=$(awk '/libdi-network-bt-app\.so/ && $2=="r-xp"{split($1,a,"-");print a[1];exit}' /proc/$PID/maps)
-[ -z "$BT_BASE" ] && BT_BASE=$(awk '/libdi-network-bt-app\.so/ && $3=="00000000"{split($1,a,"-");print a[1];exit}' /proc/$PID/maps)
-prog "STEP3: libc=$LIBC_BASE bt-app=$BT_BASE"
+# --- start sdbd too (root shell over sdb, for the sdb-client route) ----------
+[ -x /usr/sbin/sdbd ] && { /usr/sbin/sdbd >/dev/null 2>&1 & log "STEP4: sdbd pid=$!"; }
 
-# select worker threads blocked in futex (tolerant of EINTR), by wchan
-FUTEX_TIDS=""
-for T in $(ls /proc/$PID/task/ 2>/dev/null | grep -v "^$PID\$"); do
-    W=$(cat /proc/$PID/task/$T/wchan 2>/dev/null)
-    case "$W" in *futex*) FUTEX_TIDS="$FUTEX_TIDS $T";; esac
-done
-prog "STEP4: futex-blocked workers =${FUTEX_TIDS:- none}"
-[ -z "$FUTEX_TIDS" ] && { prog "FATAL no futex-blocked worker"; touch "$OUT/DONE"; sync; exit 1; }
+# --- passwordless root shell on the USB serial (no login/securetty) ----------
+if [ -c /dev/ttyGS0 ]; then
+    /sbin/agetty --autologin root --keep-baud ttyGS0 115200,38400,9600 >/dev/null 2>&1 &
+    log "STEP5: agetty --autologin root on ttyGS0, pid=$!"
+    # fallback: a raw shell bound straight to the serial, in case agetty balks
+    setsid sh -c 'exec /bin/sh <>/dev/ttyGS0 >&0 2>&1' >/dev/null 2>&1 &
+    log "STEP5b: raw /bin/sh bound to ttyGS0 as backup, pid=$!"
+else
+    log "STEP5: /dev/ttyGS0 not a char device; ACM gadget may not have come up"
+fi
 
-for WT in $FUTEX_TIDS; do
-    COMM=$(cat /proc/$PID/task/$WT/comm 2>/dev/null)
-    prog "--- worker $WT ($COMM) ---"
-    if [ -n "$LIBC_BASE" ]; then
-        GP=$(printf '0x%x' $((0x$LIBC_BASE + 0x95108)))
-        "$INJ" "$WT" arm "$GP" 0 0 0 0 > "$OUT/10-w$WT-getpid.txt" 2>&1
-        prog "  getpid rc=$? :: $(cat "$OUT/10-w$WT-getpid.txt")"
-        if ! alive; then prog "  app DIED on getpid@$WT -> not tolerant; stop"; break; fi
-        prog "  app ALIVE after getpid@$WT (futex thread tolerated the hijack)"
-    fi
-    if [ -n "$BT_BASE" ]; then
-        FUNC=$(printf '0x%x' $((0x$BT_BASE + 0x8de0)))
-        "$INJ" "$WT" thumb "$FUNC" 8 0 20 0 > "$OUT/11-w$WT-trigger.txt" 2>&1
-        prog "  btSendEventToUI rc=$? :: $(cat "$OUT/11-w$WT-trigger.txt")"
-    fi
-    i=0; while [ $i -lt 6 ]; do up7679 && break; sleep 1; i=$((i+1)); done
-    if up7679; then
-        prog "RESULT: *** SUCCESS 7679 LISTENING via $WT ($COMM) -- RVF, no phone ***"
-        break
-    fi
-    alive && prog "  $WT: trigger ran, app alive, 7679 not up; next futex worker" \
-          || { prog "  $WT: app died after trigger; stop"; break; }
-done
-
-netstat -lntp > "$OUT/20-netstat-after.txt" 2>&1; sync
-up7679 && prog "FINAL: 7679 UP" || prog "FINAL: 7679 not up"
-rm -f "$INJ" 2>/dev/null
+log "STEP6: USB console should be live."
+log "       On the Mac: plug the USB cable in, then:"
+log "         ls /dev/cu.usbmodem*     (find the port)"
+log "         screen /dev/cu.usbmodem<N> 115200   (root shell; Ctrl-A K to quit)"
+log "       Holding script mode open so the gadget stays up. Power off when done."
 touch "$OUT/DONE"; sync
-prog "DONE"
+
+# hold script mode so dfmsd does not reboot and reset the USB gadget
+i=0
+while [ $i -lt 1800 ]; do
+    sleep 15; i=$((i+15))
+    # heartbeat + keep re-asserting the shell if the serial dropped
+    [ -c /dev/ttyGS0 ] && pgrep -f "agetty.*ttyGS0" >/dev/null 2>&1 || \
+        { /sbin/agetty --autologin root --keep-baud ttyGS0 115200 >/dev/null 2>&1 & }
+done
+log "STEP7: 30-min keepalive elapsed; exiting (camera will reboot)"
