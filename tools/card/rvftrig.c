@@ -28,6 +28,7 @@
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
+#include <fcntl.h>
 #include <unistd.h>
 
 #define LOGPATH "/mnt/mmc/rvf-out/50-preload.txt"
@@ -96,16 +97,19 @@ static void *trigger_thread(void *arg)
 __attribute__((constructor))
 static void rvftrig_init(void)
 {
-    /* Self-clean FIRST. The service is set Restart=always so a kill will
-     * reload us, but that also means if we ever crashed the app it would
-     * re-preload us on every restart -> a loop. Deleting our .so and the
-     * drop-in here makes a subsequent restart start the app WITHOUT us, so at
-     * most one trigger ever happens. We are already mapped into memory, so
-     * unlinking the file does not affect this running instance. */
-    unlink("/opt/usr/rvftrig.so");
-    unlink("/run/systemd/system/di-camera-app.service.d/rvf-preload.conf");
+    /* SELF-GUARD FIRST: only act inside di-camera-app. This .so may be loaded
+     * into MANY processes (via /etc/profile.d env or /etc/ld.so.preload, or a
+     * per-service Environment). In any other process btSendEventToUI is absent
+     * and the fixed-address fallback would crash it -- so in anything but
+     * di-camera-app we must do NOTHING and return immediately. Read
+     * /proc/self/comm (kernel-truncated to 15 chars: "di-camera-app"). */
+    char comm[32] = {0};
+    int fd = open("/proc/self/comm", 0 /* O_RDONLY */);
+    if (fd >= 0) { read(fd, comm, sizeof comm - 1); close(fd); }
+    if (strncmp(comm, "di-camera-app", 13) != 0)
+        return;                       /* not the camera app -> harmless no-op */
 
-    logln("preload: constructor entered -- app started with LD_PRELOAD; self-cleaned");
+    logln("preload: in di-camera-app; spawning trigger thread");
     pthread_t t;
     if (pthread_create(&t, 0, trigger_thread, 0) != 0)
         logln("preload: pthread_create FAILED");

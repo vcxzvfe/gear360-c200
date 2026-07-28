@@ -136,3 +136,37 @@ the loop (normal RVF) + the already-built `rvf_soap.py`/`ttts.py` on the Mac.
 **What IS achieved and solid:** root shell over USB, full firmware teardown,
 the recovered SOAP + device description, the tested TTTS demuxer, and a complete
 map of the camera. The USB-control question is answered: yes.
+
+---
+
+## 2026-07-28 — The reboot is the DRIMe5 watchdog; phone-free RVF needs a rootfs write
+
+The reboot-on-di-camera-app-death was traced with the live shell:
+- `dmesg`: `drime5_wdt: Drime5 Watchdog Timer enabled (5 seconds)`. No userspace
+  process holds /dev/watchdog (di-camera-app kicks it transiently).
+- di-camera-app manages it via libdevice-node `device_set_property`:
+  `[VERIFIED-BY-OBJDUMP]` Disable=`(4,23,0)`, Enable=`(4,23,i)`,
+  ShutdownAfterWatchdog=`(4,25,i)`, Reset/kick=`(4,26,0)`.
+- Built `tools/card/devprop` (dlopen libdevice-node, run via `/lib/ld-linux.so.3`)
+  to call these from the shell. Disabling (4,23,0) returned 0 but did NOT stop
+  the reboot; a background hold looping (4,25,0)+(4,26,0) at 4 Hz also did NOT.
+  So killing di-camera-app reboots faster/otherwise than a plain 5 s watchdog
+  timeout, and it could not be defeated from userspace (dfmsd-kill, /dev/watchdog
+  takeover, and device_set_property hold all failed).
+
+Consequence: EVERY restart/injection path is blocked by the reboot. The only way
+to get di-camera-app to run WITH our LD_PRELOAD is to have it start that way on a
+NORMAL boot -- i.e. a PERSISTENT preload, which requires writing the read-only
+rootfs (mmcblk0p9, ext4). `/etc/profile` sources only `/etc/profile.d/*.sh` (all
+rootfs); `/run/tizen-mobile-env` is generated at boot by `tizen-generate-env`
+from `source /etc/profile` -- no /opt-writable hook exists in the chain.
+`/etc/ld.so.preload` exists (`/usr/lib/libsys-assert.so`) and works globally but
+is also rootfs.
+
+So phone-free RVF reduces to: a single small rootfs write (a systemd drop-in
+`/etc/systemd/system/di-camera-app.service.d/rvf.conf` with
+`Environment=LD_PRELOAD=/opt/usr/rvftrig.so`, lowest blast radius), then a cold
+reboot -> di-camera-app starts preloaded -> the .so (now SELF-GUARDED to act only
+in di-camera-app) triggers RVF -> 7679. The rootfs write is the one genuinely
+brick-capable action (hibernation-snapshot inconsistency), on the AQK1 unit which
+has a verified recovery image and a live shell. It is the owner's call.
