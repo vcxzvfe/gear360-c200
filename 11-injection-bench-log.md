@@ -92,3 +92,47 @@ a large undertaking with no guarantee on this SoC.
 4. **BlueZ SAP emulation** from a second Linux Bluetooth host sending the real
    `{"execute":"liveview"}` frame. Non-invasive to the app, but a substantial
    SAP/RFCOMM implementation effort.
+
+---
+
+## 2026-07-28 — Live USB shell, and why LD_PRELOAD is also blocked
+
+With the sdb-over-USB root shell (13-usb-console.md), the RVF trigger could
+finally be worked live instead of one card per boot. `rvftrig.so` was pushed to
+`/opt/usr` (chunked base64 through the shell, md5-verified), a systemd drop-in
+`/run/systemd/system/di-camera-app.service.d/rvf.conf` set
+`Environment=LD_PRELOAD=/opt/usr/rvftrig.so` + `Restart=always`, and
+`systemctl daemon-reload` confirmed both took effect (`systemctl show`).
+
+Then `di-camera-app` was killed to force the preloaded restart. Result, twice
+(SIGTERM and SIGKILL): **the whole system rebooted.** `[VERIFIED-DEVICE]`
+`/proc/uptime` dropped from 254 s to 41 s; the `/run` drop-in was gone; the
+`.so` never logged; `di-camera-app` came back (pid 252) WITHOUT the preload.
+
+The reboot is **not** systemd (`OnFailure=` empty, `WatchdogUSec=0`) and **not**
+a process kicking `/dev/watchdog` (no process holds it, before or after).
+`di-camera-app` is the camera's sole UI/session app; its death is caught at a
+higher level (app-manager / session) that reboots. Taking over `/dev/watchdog`
+kicking from the independent sdb shell did **not** prevent it.
+
+**Consequence:** LD_PRELOAD is blocked by the same reboot that clears the only
+writable systemd config location (`/run`). To make it work the drop-in (or
+`/etc/ld.so.preload`, or the `.service` file) must be **persistent**, i.e. a
+rootfs write — the one genuinely brick-capable action — or the reboot-on-death
+mechanism must be defeated (not found).
+
+### RVF trigger: full status
+Every non-rootfs-write path is now exhausted and verified dead:
+- External (OSC commands, SOAP changeToRVF, Street View, Remote control): closed.
+- ptrace call-injection (any thread, any function): crashes the app (syscall-restart).
+- Non-Bluetooth in-app triggers (D-Bus, SysV, `st`, vconf): none reaches `Start(RVF)`.
+- LD_PRELOAD: di-camera-app restart reboots the system, clearing the /run drop-in.
+
+Remaining, all significant: (a) persistent LD_PRELOAD / ld.so.preload via a
+rootfs (eMMC) write — brick-capable; (b) a syscall-aware injector (frida-class);
+(c) BlueZ SAP emulation feeding the real liveview frame; (d) an Android phone in
+the loop (normal RVF) + the already-built `rvf_soap.py`/`ttts.py` on the Mac.
+
+**What IS achieved and solid:** root shell over USB, full firmware teardown,
+the recovered SOAP + device description, the tested TTTS demuxer, and a complete
+map of the camera. The USB-control question is answered: yes.
