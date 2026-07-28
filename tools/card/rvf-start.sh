@@ -1,23 +1,21 @@
 #!/bin/sh
-# rvf-start.sh (v11) -- bring up an interactive root shell over the USB cable.
+# rvf-start.sh (v12) -- make deviced bring up acm,sdb over USB (not MTP).
 #
-# Big pivot. ptrace injection is a dead end (v1-v10). But the firmware's USB
-# gadget supports a mode that exposes a CDC-ACM serial console AND sdb:
-#   deviced usb-configurations.xml, mode 3 (acm,sdb):
-#     funcs_fconf = "acm,sdb", idVendor 04e8, idProduct 6860, iProduct SM-C200
-#   and /etc/passwd has root WITH NO PASSWORD (root::0:0:...).
+# v11 proved the USB path works: the camera enumerated on the Mac as Samsung
+# 04e8:6860. BUT it came up as PTP/MTP (interface class 6), not acm,sdb --
+# because on USB connect, deviced sets the mode from the persistent selector
+# `db/usb/sel_mode`, which is 1 (mtp), clobbering the gadget we had set.
 #
-# So this script (root, in script mode) reconfigures the USB gadget to acm,sdb
-# and starts a PASSWORDLESS root shell on /dev/ttyGS0 via `agetty --autologin
-# root` (bypassing login/securetty entirely). Then it sleeps to hold script
-# mode open so the gadget stays up and dfmsd does not reboot.
+# v12 doesn't fight deviced; it sets the persistent selector to 3 (acm,sdb) and
+# enables sdb, so deviced ITSELF brings up acm,sdb when the cable is (re)plugged.
+# It also directly re-asserts the gadget in a loop as a backup, and holds script
+# mode open. Then the Mac talks sdb over USB with tools/sdb_usb.py (no Tizen
+# Studio, no serial driver needed -- macOS leaves the vendor interface free for
+# libusb).
 #
-# Result: plug the USB cable into the Mac and a /dev/cu.usbmodem* serial port
-# appears; `screen /dev/cu.usbmodem... 115200` gives a live root shell. No
-# soldering, no sdb client, no card-reboot cycle -- an INTERACTIVE shell at last.
-#
-# Writes only sysfs (volatile, reset by reboot; not a block device) and the SD
-# card. No eMMC write.
+# Writes: the vconf DB under /opt (ext4 data partition -- persistent settings,
+# reversible, NOT the firmware/rootfs eMMC), sysfs (volatile), and the SD card.
+# No raw block-device / firmware write.
 
 OUT=/mnt/mmc/rvf-out
 U=/sys/class/usb_mode/usb0
@@ -25,68 +23,53 @@ rm -f /mnt/mmc/info.tg 2>/dev/null; sync
 mkdir -p "$OUT"
 exec 2>"$OUT/00-stderr.txt"
 log() { echo "$@" >> "$OUT/00-progress.txt"; sync; }
-log "STEP0: v11 USB-console; loop guard armed"
+log "STEP0: v12 -- set persistent USB mode 3 (acm,sdb) so deviced brings up sdb"
 id > "$OUT/01-id.txt" 2>&1
 
-# record the gadget's current state
-{ echo "funcs_fconf=$(cat $U/funcs_fconf 2>&1)"
-  echo "idProduct=$(cat $U/idProduct 2>&1)"
-  ls -la /sys/class/usb_mode/ 2>&1; } > "$OUT/40-usb-before.txt"
+# record current selectors for the record
+{ echo "db/usb/sel_mode (before):"; vconftool get db/usb/sel_mode 2>&1
+  echo "memory/sysman/sdb_sel (before):"; vconftool get memory/sysman/sdb_sel 2>&1
+  echo "raw sel_mode file:"; xxd /opt/var/kdb/db/usb/sel_mode 2>&1; } > "$OUT/50-sel-before.txt"
 sync
-log "STEP1: usb0 exists? $( [ -d "$U" ] && echo yes || echo NO )"
-if [ ! -d "$U" ]; then
-    log "FATAL: /sys/class/usb_mode/usb0 missing; dumping /sys/class/usb_mode"
-    ls -la /sys/class/usb_mode/ > "$OUT/41-usbmode-ls.txt" 2>&1; sync
-    # keep alive anyway so we can inspect over... nothing. just exit.
-    touch "$OUT/DONE"; sync; exit 1
-fi
 
-# --- switch gadget to mode 3 (acm,sdb), matching deviced's sysfs sequence ----
-echo 0        > $U/enable            2>>"$OUT/00-stderr.txt"
-echo 04e8     > $U/idVendor          2>>"$OUT/00-stderr.txt"
-echo 6860     > $U/idProduct         2>>"$OUT/00-stderr.txt"
-echo 0        > $U/bDeviceClass      2>/dev/null
-echo 0        > $U/bDeviceSubClass   2>/dev/null
-echo 0        > $U/bDeviceProtocol   2>/dev/null
-echo acm,sdb  > $U/funcs_fconf       2>>"$OUT/00-stderr.txt"
-echo null     > $U/funcs_sconf       2>/dev/null
-echo SM-C200  > $U/iProduct          2>/dev/null
-echo 1        > $U/enable            2>>"$OUT/00-stderr.txt"
+# 1) enable sdb + select mode 3 (acm,sdb), persistently
+vconftool set -t int memory/sysman/sdb_sel 1 -f  2>>"$OUT/00-stderr.txt"
+vconftool set -t int db/usb/sel_mode        3 -f  2>>"$OUT/00-stderr.txt"
+vconftool set -t int db/setting/usb_mode    3 -f  2>>"$OUT/00-stderr.txt"
 sync
-log "STEP2: gadget set -> funcs_fconf=$(cat $U/funcs_fconf 2>&1)"
-sleep 2
+{ echo "db/usb/sel_mode (after):"; vconftool get db/usb/sel_mode 2>&1
+  echo "sdb_sel (after):"; vconftool get memory/sysman/sdb_sel 2>&1; } > "$OUT/51-sel-after.txt"
+sync
+log "STEP1: selectors set -> sel_mode=$(vconftool get db/usb/sel_mode 2>&1 | tr -d '\n')"
 
-# --- confirm the ACM serial node appeared -----------------------------------
-ls -la /dev/ttyGS0 > "$OUT/42-ttyGS0.txt" 2>&1
-log "STEP3: /dev/ttyGS0 -> $(ls -la /dev/ttyGS0 2>&1)"
+# 2) also assert the gadget directly, now and in a loop, as a backup in case
+#    deviced does not re-apply on its own.
+set_gadget() {
+    echo 0        > $U/enable          2>/dev/null
+    echo 04e8     > $U/idVendor         2>/dev/null
+    echo 6860     > $U/idProduct        2>/dev/null
+    echo acm,sdb  > $U/funcs_fconf      2>/dev/null
+    echo null     > $U/funcs_sconf      2>/dev/null
+    echo SM-C200  > $U/iProduct         2>/dev/null
+    echo 1        > $U/enable           2>/dev/null
+}
+[ -d "$U" ] && { set_gadget; log "STEP2: gadget set -> funcs=$(cat $U/funcs_fconf 2>&1)"; } \
+            || log "STEP2: $U missing"
 
-# --- start sdbd too (root shell over sdb, for the sdb-client route) ----------
-[ -x /usr/sbin/sdbd ] && { /usr/sbin/sdbd >/dev/null 2>&1 & log "STEP4: sdbd pid=$!"; }
+# 3) start sdbd directly too (in case deviced does not)
+[ -x /usr/sbin/sdbd ] && { /usr/sbin/sdbd >/dev/null 2>&1 & log "STEP3: sdbd pid=$!"; }
 
-# --- passwordless root shell on the USB serial (no login/securetty) ----------
-if [ -c /dev/ttyGS0 ]; then
-    /sbin/agetty --autologin root --keep-baud ttyGS0 115200,38400,9600 >/dev/null 2>&1 &
-    log "STEP5: agetty --autologin root on ttyGS0, pid=$!"
-    # fallback: a raw shell bound straight to the serial, in case agetty balks
-    setsid sh -c 'exec /bin/sh <>/dev/ttyGS0 >&0 2>&1' >/dev/null 2>&1 &
-    log "STEP5b: raw /bin/sh bound to ttyGS0 as backup, pid=$!"
-else
-    log "STEP5: /dev/ttyGS0 not a char device; ACM gadget may not have come up"
-fi
-
-log "STEP6: USB console should be live."
-log "       On the Mac: plug the USB cable in, then:"
-log "         ls /dev/cu.usbmodem*     (find the port)"
-log "         screen /dev/cu.usbmodem<N> 115200   (root shell; Ctrl-A K to quit)"
-log "       Holding script mode open so the gadget stays up. Power off when done."
+log "STEP4: ready. On the Mac:"
+log "       1) UNPLUG then REPLUG the USB cable (so deviced re-applies mode 3)"
+log "       2) python3 ~/Dev/claude/gear360-c200/tools/sdb_usb.py --probe"
+log "          -> should show a vendor(0xff) interface with a bulk pair (=sdb)"
+log "       3) python3 ~/Dev/claude/gear360-c200/tools/sdb_usb.py   (root shell)"
 touch "$OUT/DONE"; sync
 
-# hold script mode so dfmsd does not reboot and reset the USB gadget
+# hold script mode; keep re-asserting the gadget so a deviced clobber loses
 i=0
 while [ $i -lt 1800 ]; do
-    sleep 15; i=$((i+15))
-    # heartbeat + keep re-asserting the shell if the serial dropped
-    [ -c /dev/ttyGS0 ] && pgrep -f "agetty.*ttyGS0" >/dev/null 2>&1 || \
-        { /sbin/agetty --autologin root --keep-baud ttyGS0 115200 >/dev/null 2>&1 & }
+    sleep 5; i=$((i+5))
+    [ -d "$U" ] && [ "$(cat $U/funcs_fconf 2>/dev/null)" != "acm,sdb" ] && set_gadget
 done
-log "STEP7: 30-min keepalive elapsed; exiting (camera will reboot)"
+log "STEP5: keepalive elapsed; exiting"
